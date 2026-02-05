@@ -1,0 +1,301 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Send, Loader2, Trash2, CheckCircle2, Circle, Clock } from 'lucide-react';
+
+const PersonalAIAssistant = () => {
+  const [tasks, setTasks] = useState([]);
+  const [messages, setMessages] = useState([
+    { role: 'assistant', content: 'Hey Roy! Ik ben je persoonlijke AI assistent. Geef me je taken en ik help je ze te organiseren en prioriteren. Wat staat er op de planning?' }
+  ]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('aiAssistantTasks');
+    if (saved) {
+      setTasks(JSON.parse(saved));
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('aiAssistantTasks', JSON.stringify(tasks));
+  }, [tasks]);
+
+  const getPriorityColor = (priority) => {
+    switch(priority) {
+      case 'urgent': return 'bg-red-100 text-red-800 border-red-300';
+      case 'high': return 'bg-orange-100 text-orange-800 border-orange-300';
+      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+      case 'low': return 'bg-green-100 text-green-800 border-green-300';
+      default: return 'bg-gray-100 text-gray-800 border-gray-300';
+    }
+  };
+
+  const getPriorityLabel = (priority) => {
+    const labels = {
+      urgent: 'Urgent',
+      high: 'Hoog',
+      medium: 'Gemiddeld',
+      low: 'Laag'
+    };
+    return labels[priority] || priority;
+  };
+
+  const toggleTaskComplete = (id) => {
+    setTasks(tasks.map(task => 
+      task.id === id ? { ...task, completed: !task.completed } : task
+    ));
+  };
+
+  const deleteTask = (id) => {
+    setTasks(tasks.filter(task => task.id !== id));
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
+
+    const userMessage = input.trim();
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsLoading(true);
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': 'YOUR_API_KEY_HERE',
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [
+            {
+              role: 'user',
+              content: `Je bent een persoonlijke AI assistent voor Roy. Huidige taken: ${JSON.stringify(tasks)}
+
+Gebruiker zegt: "${userMessage}"
+
+Analyseer dit bericht en:
+1. Identificeer of er nieuwe taken zijn om toe te voegen
+2. Bepaal prioriteit (urgent/high/medium/low) en deadline indien relevant
+3. Check of er updates zijn voor bestaande taken
+4. Geef een vriendelijk, kort Nederlands antwoord
+
+Respond ALLEEN in dit JSON format:
+{
+  "response": "je antwoord aan Roy",
+  "actions": [
+    {"type": "add", "task": "taak beschrijving", "priority": "high", "deadline": "2024-03-15"},
+    {"type": "update", "id": "task_id", "completed": true},
+    {"type": "delete", "id": "task_id"}
+  ]
+}`
+            }
+          ]
+        })
+      });
+
+      const data = await response.json();
+      const content = data.content[0].text;
+      
+      let parsed;
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        parsed = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+      } catch {
+        parsed = { response: content, actions: [] };
+      }
+
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: parsed.response || 'Ik heb je bericht verwerkt!' 
+      }]);
+
+      if (parsed.actions && Array.isArray(parsed.actions)) {
+        let newTasks = [...tasks];
+        
+        parsed.actions.forEach(action => {
+          if (action.type === 'add') {
+            newTasks.push({
+              id: `task_${Date.now()}_${Math.random()}`,
+              title: action.task,
+              priority: action.priority || 'medium',
+              deadline: action.deadline || null,
+              completed: false,
+              createdAt: new Date().toISOString()
+            });
+          } else if (action.type === 'update') {
+            newTasks = newTasks.map(t => 
+              t.id === action.id ? { ...t, ...action } : t
+            );
+          } else if (action.type === 'delete') {
+            newTasks = newTasks.filter(t => t.id !== action.id);
+          }
+        });
+
+        setTasks(newTasks);
+      }
+
+    } catch (error) {
+      console.error('Error:', error);
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: 'Sorry, er ging iets mis. Check je API key en probeer opnieuw.' 
+      }]);
+    }
+
+    setIsLoading(false);
+  };
+
+  const sortedTasks = [...tasks].sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
+    return priorityOrder[a.priority] - priorityOrder[b.priority];
+  });
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
+      <div className="max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[95vh]">
+          
+          {/* Taken Sidebar */}
+          <div className="lg:col-span-1 bg-white/10 backdrop-blur-lg rounded-2xl p-6 overflow-y-auto border border-white/20">
+            <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
+              <CheckCircle2 className="w-6 h-6" />
+              Mijn Taken ({tasks.filter(t => !t.completed).length})
+            </h2>
+            
+            <div className="space-y-3">
+              {sortedTasks.map(task => (
+                <div 
+                  key={task.id}
+                  className={`bg-white rounded-lg p-4 border-2 transition-all ${
+                    task.completed ? 'opacity-50' : ''
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <button
+                      onClick={() => toggleTaskComplete(task.id)}
+                      className="mt-1 flex-shrink-0"
+                    >
+                      {task.completed ? (
+                        <CheckCircle2 className="w-5 h-5 text-green-600" />
+                      ) : (
+                        <Circle className="w-5 h-5 text-gray-400 hover:text-green-600" />
+                      )}
+                    </button>
+                    
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium ${
+                        task.completed ? 'line-through text-gray-500' : 'text-gray-900'
+                      }`}>
+                        {task.title}
+                      </p>
+                      
+                      <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        <span className={`text-xs px-2 py-1 rounded-full border ${getPriorityColor(task.priority)}`}>
+                          {getPriorityLabel(task.priority)}
+                        </span>
+                        
+                        {task.deadline && (
+                          <span className="text-xs text-gray-600 flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {new Date(task.deadline).toLocaleDateString('nl-NL')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <button
+                      onClick={() => deleteTask(task.id)}
+                      className="text-gray-400 hover:text-red-600 flex-shrink-0"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              
+              {tasks.length === 0 && (
+                <div className="text-center py-12 text-white/60">
+                  <Circle className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>Geen taken yet. Start een gesprek!</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Chat Interface */}
+          <div className="lg:col-span-2 bg-white/10 backdrop-blur-lg rounded-2xl border border-white/20 flex flex-col">
+            <div className="p-6 border-b border-white/20">
+              <h1 className="text-3xl font-bold text-white">AI Assistent</h1>
+              <p className="text-white/70 text-sm">Praat met me over je taken en planning</p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {messages.map((msg, idx) => (
+                <div
+                  key={idx}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                      msg.role === 'user'
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white/20 text-white border border-white/30'
+                    }`}
+                  >
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  </div>
+                </div>
+              ))}
+              
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-white/20 text-white border border-white/30 rounded-2xl px-4 py-3">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  </div>
+                </div>
+              )}
+              
+              <div ref={messagesEndRef} />
+            </div>
+
+            <div className="p-6 border-t border-white/20">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                  placeholder="Typ je bericht..."
+                  className="flex-1 bg-white/10 border border-white/30 rounded-xl px-4 py-3 text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  disabled={isLoading}
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={isLoading || !input.trim()}
+                  className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-xl px-6 py-3 flex items-center gap-2 transition-colors"
+                >
+                  {isLoading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Send className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default PersonalAIAssistant;
